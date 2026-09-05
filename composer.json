@@ -1,0 +1,30 @@
+{
+    "name": "aorinex/aorinex-new",
+    "description": "Scaffold a new Webman backend project from the aorinex backend template (like laravel new).",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "webman",
+        "installer",
+        "scaffold",
+        "aorinex"
+    ],
+    "authors": [
+        {
+            "name": "Aorinex",
+            "role": "Developer"
+        }
+    ],
+    "require": {
+        "php": ">=8.1"
+    },
+    "bin": [
+        "bin/aorinex-new"
+    ],
+    "autoload": {
+        "psr-4": {
+            "Aorinex\\AorinexNew\\": "src/"
+        }
+    },
+    "minimum-stability": "stable"
+}
