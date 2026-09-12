@@ -7,7 +7,7 @@ namespace Aorinex\AorinexNew;
 use RuntimeException;
 
 /**
- * 按 backend / frontend / all 组装输出目录。
+ * 按 backend / frontend / website / all 组装输出目录。
  */
 final class WorkspaceCreator
 {
@@ -17,12 +17,15 @@ final class WorkspaceCreator
         private readonly string $rootDir,
         private readonly ?string $backendFrom,
         private readonly ?string $frontendFrom,
+        private readonly ?string $websiteFrom,
         private readonly string $backendRepo,
         private readonly string $frontendRepo,
+        private readonly string $websiteRepo,
         private readonly string $templateRef,
         private readonly string $imageNamespace,
         private readonly string $backendOldName,
         private readonly string $frontendOldName,
+        private readonly string $websiteOldName,
         private readonly bool $keepGit,
         private readonly bool $withComposer,
         private readonly bool $withPnpm,
@@ -39,14 +42,15 @@ final class WorkspaceCreator
 
         if (!in_array($this->type, Config::TYPES, true)) {
             throw new RuntimeException(
-                '类型无效: ' . $this->type . '（可选: backend、frontend、all）'
+                '类型无效: ' . $this->type . '（可选: backend、frontend、website、all）'
             );
         }
 
         match ($this->type) {
             Config::TYPE_BACKEND => $this->createBackendOnly(),
             Config::TYPE_FRONTEND => $this->createFrontendOnly(),
-            Config::TYPE_ALL => $this->createBoth(),
+            Config::TYPE_WEBSITE => $this->createWebsiteOnly(),
+            Config::TYPE_ALL => $this->createAll(),
         };
     }
 
@@ -54,7 +58,6 @@ final class WorkspaceCreator
     {
         $name = $this->baseName . '-backend';
         $dir = $this->rootDir;
-        // rootDir 默认已是 <base>-backend；若用户 -d 指定则用指定目录
         $this->createOne(
             kind: Config::TYPE_BACKEND,
             projectName: $name,
@@ -81,7 +84,22 @@ final class WorkspaceCreator
         $this->printDone([$dir], Config::TYPE_FRONTEND);
     }
 
-    private function createBoth(): void
+    private function createWebsiteOnly(): void
+    {
+        $name = $this->baseName . '-website';
+        $dir = $this->rootDir;
+        $this->createOne(
+            kind: Config::TYPE_WEBSITE,
+            projectName: $name,
+            targetDir: $dir,
+            fromPath: $this->websiteFrom,
+            repo: $this->websiteRepo,
+            oldName: $this->websiteOldName,
+        );
+        $this->printDone([$dir], Config::TYPE_WEBSITE);
+    }
+
+    private function createAll(): void
     {
         if (file_exists($this->rootDir)) {
             throw new RuntimeException("目标目录已存在: {$this->rootDir}");
@@ -92,8 +110,10 @@ final class WorkspaceCreator
 
         $backendName = $this->baseName . '-backend';
         $frontendName = $this->baseName . '-frontend';
+        $websiteName = $this->baseName . '-website';
         $backendDir = $this->rootDir . DIRECTORY_SEPARATOR . $backendName;
         $frontendDir = $this->rootDir . DIRECTORY_SEPARATOR . $frontendName;
+        $websiteDir = $this->rootDir . DIRECTORY_SEPARATOR . $websiteName;
 
         $this->createOne(
             kind: Config::TYPE_BACKEND,
@@ -111,9 +131,17 @@ final class WorkspaceCreator
             repo: $this->frontendRepo,
             oldName: $this->frontendOldName,
         );
+        $this->createOne(
+            kind: Config::TYPE_WEBSITE,
+            projectName: $websiteName,
+            targetDir: $websiteDir,
+            fromPath: $this->websiteFrom,
+            repo: $this->websiteRepo,
+            oldName: $this->websiteOldName,
+        );
 
-        $this->writeRootReadme($backendName, $frontendName);
-        $this->printDone([$backendDir, $frontendDir], Config::TYPE_ALL);
+        $this->writeRootReadme($backendName, $frontendName, $websiteName);
+        $this->printDone([$backendDir, $frontendDir, $websiteDir], Config::TYPE_ALL);
     }
 
     private function createOne(
@@ -127,6 +155,7 @@ final class WorkspaceCreator
         $creator = new ProjectCreator(
             kind: $kind,
             projectName: $projectName,
+            baseName: $this->baseName,
             targetDir: $targetDir,
             fromPath: $fromPath,
             templateRepo: $repo,
@@ -140,7 +169,7 @@ final class WorkspaceCreator
         $creator->run();
     }
 
-    private function writeRootReadme(string $backendName, string $frontendName): void
+    private function writeRootReadme(string $backendName, string $frontendName, string $websiteName): void
     {
         $content = <<<MD
 # {$this->baseName}
@@ -150,7 +179,8 @@ final class WorkspaceCreator
 | 目录 | 说明 |
 |------|------|
 | `{$backendName}/` | Webman 后端 |
-| `{$frontendName}/` | Vue Vben 前端（web-ele） |
+| `{$frontendName}/` | Vue Vben 管理端（web-ele） |
+| `{$websiteName}/` | Nuxt 官网 |
 
 ## 后端
 
@@ -161,13 +191,22 @@ composer install
 php webman start
 ```
 
-## 前端
+## 管理端
 
 ```bash
 cd {$frontendName}
 pnpm install
 # 编辑 apps/web-ele/.env.development 中的 VITE_DEV_PROXY_TARGET
 pnpm run dev:ele
+```
+
+## 官网
+
+```bash
+cd {$websiteName}
+pnpm install
+cp .env.example .env
+pnpm dev
 ```
 
 MD;
@@ -192,8 +231,12 @@ MD;
             echo "  cd .../*-backend && composer install && php webman start\n";
         }
         if ($type === Config::TYPE_FRONTEND || $type === Config::TYPE_ALL) {
-            echo "  # 前端\n";
+            echo "  # 管理端\n";
             echo "  cd .../*-frontend && pnpm install && pnpm run dev:ele\n";
+        }
+        if ($type === Config::TYPE_WEBSITE || $type === Config::TYPE_ALL) {
+            echo "  # 官网\n";
+            echo "  cd .../*-website && pnpm install && cp .env.example .env && pnpm dev\n";
         }
         echo "\n";
     }

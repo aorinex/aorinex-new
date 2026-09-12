@@ -18,7 +18,7 @@ final class Application
         }
 
         if (in_array($args[0], ['-V', '--version', 'version'], true)) {
-            echo "aorinex-new 1.1.0\n";
+            echo "aorinex-new 1.2.0\n";
 
             return 0;
         }
@@ -27,12 +27,15 @@ final class Application
         $type = null;
         $backendFrom = Config::defaultBackendFrom();
         $frontendFrom = Config::defaultFrontendFrom();
+        $websiteFrom = Config::defaultWebsiteFrom();
         $backendRepo = Config::defaultBackendRepo();
         $frontendRepo = Config::defaultFrontendRepo();
+        $websiteRepo = Config::defaultWebsiteRepo();
         $ref = Config::defaultTemplateRef();
         $imageNamespace = Config::defaultImageNamespace();
         $backendOldName = Config::DEFAULT_BACKEND_OLD_NAME;
         $frontendOldName = Config::DEFAULT_FRONTEND_OLD_NAME;
+        $websiteOldName = Config::DEFAULT_WEBSITE_OLD_NAME;
         $directory = null;
         $keepGit = false;
         $withComposer = false;
@@ -50,8 +53,8 @@ final class Application
             if (!str_starts_with($arg, '-')) {
                 if ($projectName === null) {
                     $projectName = $arg;
-                } elseif ($type === null && in_array($arg, Config::TYPES, true)) {
-                    $type = $arg;
+                } elseif ($type === null && $this->isTypeToken($arg)) {
+                    $type = Config::normalizeType($arg);
                 } else {
                     fwrite(STDERR, "多余参数: {$arg}\n");
 
@@ -63,13 +66,17 @@ final class Application
 
             switch ($arg) {
                 case '--type':
-                    $type = $this->requireValue($args, $i, $arg);
+                    $type = Config::normalizeType($this->requireValue($args, $i, $arg));
                     break;
                 case '--backend-from':
                     $backendFrom = $this->requireValue($args, $i, $arg);
                     break;
                 case '--frontend-from':
                     $frontendFrom = $this->requireValue($args, $i, $arg);
+                    break;
+                case '--website-from':
+                case '--nuxt-from':
+                    $websiteFrom = $this->requireValue($args, $i, $arg);
                     break;
                 case '--from':
                     $legacyFrom = $this->requireValue($args, $i, $arg);
@@ -79,6 +86,10 @@ final class Application
                     break;
                 case '--frontend-repo':
                     $frontendRepo = $this->requireValue($args, $i, $arg);
+                    break;
+                case '--website-repo':
+                case '--nuxt-repo':
+                    $websiteRepo = $this->requireValue($args, $i, $arg);
                     break;
                 case '--repo':
                     $legacyRepo = $this->requireValue($args, $i, $arg);
@@ -95,6 +106,10 @@ final class Application
                     break;
                 case '--frontend-old-name':
                     $frontendOldName = $this->requireValue($args, $i, $arg);
+                    break;
+                case '--website-old-name':
+                case '--nuxt-old-name':
+                    $websiteOldName = $this->requireValue($args, $i, $arg);
                     break;
                 case '--old-name':
                     $legacyOldName = $this->requireValue($args, $i, $arg);
@@ -129,8 +144,9 @@ final class Application
         }
 
         $type = $type ?? Config::TYPE_ALL;
+        $type = Config::normalizeType($type);
         if (!in_array($type, Config::TYPES, true)) {
-            fwrite(STDERR, "类型无效: {$type}（可选: backend、frontend、all）\n");
+            fwrite(STDERR, "类型无效: {$type}（可选: backend、frontend、website|nuxt、all）\n");
 
             return 1;
         }
@@ -141,8 +157,10 @@ final class Application
                 $frontendFrom = $legacyFrom;
             } elseif ($type === Config::TYPE_BACKEND) {
                 $backendFrom = $legacyFrom;
+            } elseif ($type === Config::TYPE_WEBSITE) {
+                $websiteFrom = $legacyFrom;
             } else {
-                fwrite(STDERR, "all 模式下请使用 --backend-from / --frontend-from，不要使用 --from\n");
+                fwrite(STDERR, "all 模式下请使用 --backend-from / --frontend-from / --website-from，不要使用 --from\n");
 
                 return 1;
             }
@@ -150,6 +168,8 @@ final class Application
         if ($legacyRepo !== null) {
             if ($type === Config::TYPE_FRONTEND) {
                 $frontendRepo = $legacyRepo;
+            } elseif ($type === Config::TYPE_WEBSITE) {
+                $websiteRepo = $legacyRepo;
             } else {
                 $backendRepo = $legacyRepo;
             }
@@ -157,6 +177,8 @@ final class Application
         if ($legacyOldName !== null) {
             if ($type === Config::TYPE_FRONTEND) {
                 $frontendOldName = $legacyOldName;
+            } elseif ($type === Config::TYPE_WEBSITE) {
+                $websiteOldName = $legacyOldName;
             } else {
                 $backendOldName = $legacyOldName;
             }
@@ -171,12 +193,15 @@ final class Application
                 rootDir: $rootDir,
                 backendFrom: $backendFrom,
                 frontendFrom: $frontendFrom,
+                websiteFrom: $websiteFrom,
                 backendRepo: $backendRepo,
                 frontendRepo: $frontendRepo,
+                websiteRepo: $websiteRepo,
                 templateRef: $ref,
                 imageNamespace: $imageNamespace,
                 backendOldName: $backendOldName,
                 frontendOldName: $frontendOldName,
+                websiteOldName: $websiteOldName,
                 keepGit: $keepGit,
                 withComposer: $withComposer,
                 withPnpm: $withPnpm,
@@ -191,6 +216,13 @@ final class Application
         return 0;
     }
 
+    private function isTypeToken(string $arg): bool
+    {
+        $normalized = Config::normalizeType($arg);
+
+        return in_array($normalized, Config::TYPES, true) || isset(Config::TYPE_ALIASES[$arg]);
+    }
+
     private function resolveRootDir(string $projectName, string $type, ?string $directory): string
     {
         if ($directory !== null) {
@@ -199,6 +231,7 @@ final class Application
             $target = match ($type) {
                 Config::TYPE_BACKEND => $projectName . '-backend',
                 Config::TYPE_FRONTEND => $projectName . '-frontend',
+                Config::TYPE_WEBSITE => $projectName . '-website',
                 Config::TYPE_ALL => $projectName,
             };
         }
@@ -227,51 +260,56 @@ final class Application
     {
         $backendRepo = Config::defaultBackendRepo();
         $frontendRepo = Config::defaultFrontendRepo();
+        $websiteRepo = Config::defaultWebsiteRepo();
         echo <<<HELP
-aorinex-new — 从 aorinex 后端/前端模板创建新项目
+aorinex-new — 从 aorinex 后端/管理端/官网模板创建新项目
 
 用法:
-  aorinex-new <project-name> [backend|frontend|all] [选项]
-  aorinex-new <project-name> --type all [选项]
+  aorinex-new <project-name> [backend|frontend|website|nuxt|all] [选项]
+  aorinex-new <project-name> --type website [选项]
 
 参数:
   project-name              项目名（kebab-case），如 my-app
-  type                      backend | frontend | all（默认 all）
+  type                      backend | frontend | website(nuxt) | all（默认 all）
 
-目录规则:
+目录规则（与 backend 同级风格）:
   backend   → <name>-backend/
   frontend  → <name>-frontend/
-  all       → <name>/<name>-backend 与 <name>/<name>-frontend
+  website   → <name>-website/
+  all       → <name>/<name>-backend + <name>-frontend + <name>-website
 
 选项:
-  --type <type>             同上
+  --type <type>             同上（website 可用别名 nuxt）
   --backend-from <path>     本地后端模板目录
-  --frontend-from <path>    本地前端模板目录
-  --from <path>             仅 backend/frontend 单侧时可用（兼容旧用法）
+  --frontend-from <path>    本地管理端模板目录
+  --website-from <path>     本地官网（Nuxt）模板目录（别名 --nuxt-from）
+  --from <path>             仅单侧 backend/frontend/website 时可用（兼容旧用法）
   --backend-repo <url>      后端 Git（默认: {$backendRepo}）
-  --frontend-repo <url>     前端 Git（默认: {$frontendRepo}）
+  --frontend-repo <url>     管理端 Git（默认: {$frontendRepo}）
+  --website-repo <url>      官网 Git（默认: {$websiteRepo}，别名 --nuxt-repo）
   --repo <url>              单侧模式下的模板仓库（兼容）
   --ref, --branch <ref>     分支或 tag（默认: main）
   --image-namespace <n>     后端镜像命名空间前缀
   -d, --directory <dir>     自定义输出根目录
   --keep-git                保留模板 .git / 不重新 git init
   --with-composer           后端创建后执行 composer install
-  --with-pnpm               前端创建后执行 pnpm install
+  --with-pnpm               前端/官网创建后执行 pnpm install
   -h, --help                显示帮助
   -V, --version             显示版本
 
 环境变量:
-  AORINEX_NEW_BACKEND_REPO / AORINEX_NEW_FRONTEND_REPO
-  AORINEX_NEW_BACKEND_FROM / AORINEX_NEW_FRONTEND_FROM
+  AORINEX_NEW_BACKEND_REPO / AORINEX_NEW_FRONTEND_REPO / AORINEX_NEW_WEBSITE_REPO
+  AORINEX_NEW_BACKEND_FROM / AORINEX_NEW_FRONTEND_FROM / AORINEX_NEW_WEBSITE_FROM
   AORINEX_NEW_TEMPLATE_REF / AORINEX_NEW_IMAGE_NAMESPACE
 
 示例:
   aorinex-new my-app all \\
     --backend-from /www/wwwroot/aorinex-backend \\
-    --frontend-from /www/wwwroot/aorinex-admin
+    --frontend-from /www/wwwroot/aorinex-frontend \\
+    --website-from /www/wwwroot/aorinex-nuxt
 
-  aorinex-new my-app backend --backend-from /www/wwwroot/aorinex-backend
-  aorinex-new my-app frontend --frontend-repo https://github.com/ximengyi/aorinex-admin.git
+  aorinex-new my-app website --website-from /www/wwwroot/aorinex-nuxt
+  aorinex-new my-app nuxt --nuxt-from /www/wwwroot/aorinex-nuxt
 
 HELP;
     }

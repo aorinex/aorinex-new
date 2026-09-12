@@ -1,10 +1,11 @@
 {
     "name": "aorinex/aorinex-new",
-    "description": "Scaffold a new Webman backend project from the aorinex backend template (like laravel new).",
+    "description": "Scaffold aorinex backend / admin frontend / Nuxt website projects from templates.",
     "type": "library",
     "license": "MIT",
     "keywords": [
         "webman",
+        "nuxt",
         "installer",
         "scaffold",
         "aorinex"

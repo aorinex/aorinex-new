@@ -7,13 +7,14 @@ namespace Aorinex\AorinexNew;
 use RuntimeException;
 
 /**
- * 创建单个后端或前端工程目录。
+ * 创建单个后端 / 管理端 / 官网工程目录。
  */
 final class ProjectCreator
 {
     public function __construct(
         private readonly string $kind,
         private readonly string $projectName,
+        private readonly string $baseName,
         private readonly string $targetDir,
         private readonly ?string $fromPath,
         private readonly string $templateRepo,
@@ -47,7 +48,10 @@ final class ProjectCreator
         if ($this->kind === Config::TYPE_BACKEND && $this->withComposer) {
             $this->runComposerInstall();
         }
-        if ($this->kind === Config::TYPE_FRONTEND && $this->withPnpm) {
+        if (
+            ($this->kind === Config::TYPE_FRONTEND || $this->kind === Config::TYPE_WEBSITE)
+            && $this->withPnpm
+        ) {
             $this->runPnpmInstall();
         }
     }
@@ -80,7 +84,7 @@ final class ProjectCreator
         );
         $this->execOrFail(
             $cmd,
-            "[{$this->kind}] git clone 失败（请检查仓库地址，或使用 --backend-from / --frontend-from）"
+            "[{$this->kind}] git clone 失败（请检查仓库地址，或使用 --backend-from / --frontend-from / --website-from）"
         );
         echo "[{$this->kind}] 克隆完成: {$this->targetDir}\n";
     }
@@ -146,9 +150,11 @@ final class ProjectCreator
 
     private function renameProject(): void
     {
-        $files = $this->kind === Config::TYPE_FRONTEND
-            ? Config::FRONTEND_RENAME_FILES
-            : Config::BACKEND_RENAME_FILES;
+        $files = match ($this->kind) {
+            Config::TYPE_FRONTEND => Config::FRONTEND_RENAME_FILES,
+            Config::TYPE_WEBSITE => Config::WEBSITE_RENAME_FILES,
+            default => Config::BACKEND_RENAME_FILES,
+        };
 
         $old = $this->oldName;
         $new = $this->projectName;
@@ -168,13 +174,18 @@ final class ProjectCreator
 
             if ($this->kind === Config::TYPE_BACKEND && $rel === 'build.config.sh') {
                 $content = $this->patchBuildConfig($content, $new, $imageRepo);
-            } elseif ($this->kind === Config::TYPE_FRONTEND && $rel === 'package.json') {
+            } elseif (
+                ($this->kind === Config::TYPE_FRONTEND || $this->kind === Config::TYPE_WEBSITE)
+                && $rel === 'package.json'
+            ) {
                 $content = $this->patchPackageJsonName($content, $new);
+            } elseif ($this->kind === Config::TYPE_WEBSITE) {
+                $content = $this->patchWebsiteSiblingNames($content);
             } else {
                 $content = str_replace($old, $new, $content);
             }
 
-            if (str_starts_with($rel, 'README')) {
+            if (str_starts_with(basename($rel), 'README')) {
                 $content = $this->patchReadmeTitle($content, $new);
             }
 
@@ -183,6 +194,17 @@ final class ProjectCreator
             }
             echo "[{$this->kind}] 已更新: {$rel}\n";
         }
+    }
+
+    private function patchWebsiteSiblingNames(string $content): string
+    {
+        $map = [
+            Config::DEFAULT_WEBSITE_OLD_NAME => $this->projectName,
+            'aorinex-backend' => $this->baseName . '-backend',
+            'aorinex-frontend' => $this->baseName . '-frontend',
+        ];
+
+        return str_replace(array_keys($map), array_values($map), $content);
     }
 
     private function patchBuildConfig(string $content, string $projectName, string $imageRepo): string
@@ -206,7 +228,11 @@ final class ProjectCreator
     {
         $data = json_decode($content, true);
         if (!is_array($data)) {
-            return str_replace(Config::DEFAULT_FRONTEND_OLD_NAME, $projectName, $content);
+            $fallbackOld = $this->kind === Config::TYPE_WEBSITE
+                ? Config::DEFAULT_WEBSITE_OLD_NAME
+                : Config::DEFAULT_FRONTEND_OLD_NAME;
+
+            return str_replace($fallbackOld, $projectName, $content);
         }
         $data['name'] = $projectName;
         $encoded = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -262,17 +288,24 @@ final class ProjectCreator
             throw new RuntimeException('无法读取 .env.example');
         }
 
-        $secret = bin2hex(random_bytes(32));
-        if (preg_match('/^JWT_SECRET=.*$/m', $content)) {
-            $content = preg_replace('/^JWT_SECRET=.*$/m', 'JWT_SECRET=' . $secret, $content, 1) ?? $content;
-        } else {
-            $content .= "\nJWT_SECRET=" . $secret . "\n";
+        if ($this->kind === Config::TYPE_BACKEND) {
+            $secret = bin2hex(random_bytes(32));
+            if (preg_match('/^JWT_SECRET=.*$/m', $content)) {
+                $content = preg_replace('/^JWT_SECRET=.*$/m', 'JWT_SECRET=' . $secret, $content, 1) ?? $content;
+            } else {
+                $content .= "\nJWT_SECRET=" . $secret . "\n";
+            }
         }
 
         if (file_put_contents($env, $content) === false) {
             throw new RuntimeException('无法写入 .env');
         }
-        echo "[{$this->kind}] 已生成 .env（含随机 JWT_SECRET）\n";
+
+        if ($this->kind === Config::TYPE_BACKEND) {
+            echo "[{$this->kind}] 已生成 .env（含随机 JWT_SECRET）\n";
+        } else {
+            echo "[{$this->kind}] 已从 .env.example 生成 .env\n";
+        }
     }
 
     private function resetGit(): void
