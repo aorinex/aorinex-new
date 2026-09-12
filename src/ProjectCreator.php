@@ -6,9 +6,13 @@ namespace Aorinex\AorinexNew;
 
 use RuntimeException;
 
+/**
+ * 创建单个后端或前端工程目录。
+ */
 final class ProjectCreator
 {
     public function __construct(
+        private readonly string $kind,
         private readonly string $projectName,
         private readonly string $targetDir,
         private readonly ?string $fromPath,
@@ -18,6 +22,7 @@ final class ProjectCreator
         private readonly string $oldName,
         private readonly bool $keepGit,
         private readonly bool $withComposer,
+        private readonly bool $withPnpm,
     ) {
     }
 
@@ -39,18 +44,19 @@ final class ProjectCreator
         $this->prepareEnv();
         $this->resetGit();
 
-        if ($this->withComposer) {
+        if ($this->kind === Config::TYPE_BACKEND && $this->withComposer) {
             $this->runComposerInstall();
         }
-
-        $this->printNextSteps();
+        if ($this->kind === Config::TYPE_FRONTEND && $this->withPnpm) {
+            $this->runPnpmInstall();
+        }
     }
 
     private function assertProjectName(string $name): void
     {
         if (!preg_match('/^[a-z][a-z0-9-]*$/', $name)) {
             throw new RuntimeException(
-                "项目名无效: {$name}\n请使用 kebab-case，例如: my-backend、foo-api"
+                "项目名无效: {$name}\n请使用 kebab-case，例如: my-app、foo-shop"
             );
         }
     }
@@ -59,25 +65,24 @@ final class ProjectCreator
     {
         if ($this->fromPath !== null) {
             $this->copyFromLocal($this->fromPath, $this->targetDir);
-            echo "已从本地模板复制: {$this->fromPath}\n";
+            echo "[{$this->kind}] 已从本地模板复制: {$this->fromPath}\n";
 
             return;
         }
 
         $this->assertCommand('git');
-        $repo = $this->templateRepo;
-        $ref = $this->templateRef;
-        $target = $this->targetDir;
-
-        echo "正在克隆模板 {$repo} ({$ref}) ...\n";
+        echo "[{$this->kind}] 正在克隆模板 {$this->templateRepo} ({$this->templateRef}) ...\n";
         $cmd = sprintf(
             'git clone --depth 1 --branch %s %s %s',
-            escapeshellarg($ref),
-            escapeshellarg($repo),
-            escapeshellarg($target)
+            escapeshellarg($this->templateRef),
+            escapeshellarg($this->templateRepo),
+            escapeshellarg($this->targetDir)
         );
-        $this->execOrFail($cmd, 'git clone 失败（请检查仓库地址、分支权限，或改用 --from 本地路径）');
-        echo "克隆完成: {$target}\n";
+        $this->execOrFail(
+            $cmd,
+            "[{$this->kind}] git clone 失败（请检查仓库地址，或使用 --backend-from / --frontend-from）"
+        );
+        echo "[{$this->kind}] 克隆完成: {$this->targetDir}\n";
     }
 
     private function copyFromLocal(string $source, string $dest): void
@@ -99,6 +104,9 @@ final class ProjectCreator
         $filtered = new \RecursiveCallbackFilterIterator(
             $dirIterator,
             static function (\SplFileInfo $current) use ($source, $excludes): bool {
+                if ($current->getFilename() === '.env') {
+                    return false;
+                }
                 $rel = substr($current->getPathname(), strlen($source) + 1);
                 $rel = str_replace('\\', '/', $rel);
                 foreach ($excludes as $ex) {
@@ -106,6 +114,7 @@ final class ProjectCreator
                         return false;
                     }
                 }
+
                 return true;
             }
         );
@@ -137,14 +146,18 @@ final class ProjectCreator
 
     private function renameProject(): void
     {
+        $files = $this->kind === Config::TYPE_FRONTEND
+            ? Config::FRONTEND_RENAME_FILES
+            : Config::BACKEND_RENAME_FILES;
+
         $old = $this->oldName;
         $new = $this->projectName;
         $imageRepo = rtrim($this->imageNamespace, '/') . '/' . $new;
 
-        foreach (Config::RENAME_FILES as $rel) {
+        foreach ($files as $rel) {
             $path = $this->targetDir . DIRECTORY_SEPARATOR . $rel;
             if (!is_file($path)) {
-                echo "跳过（文件不存在）: {$rel}\n";
+                echo "[{$this->kind}] 跳过（文件不存在）: {$rel}\n";
                 continue;
             }
 
@@ -153,25 +166,22 @@ final class ProjectCreator
                 throw new RuntimeException("无法读取: {$rel}");
             }
 
-            if ($rel === 'build.config.sh') {
+            if ($this->kind === Config::TYPE_BACKEND && $rel === 'build.config.sh') {
                 $content = $this->patchBuildConfig($content, $new, $imageRepo);
+            } elseif ($this->kind === Config::TYPE_FRONTEND && $rel === 'package.json') {
+                $content = $this->patchPackageJsonName($content, $new);
             } else {
                 $content = str_replace($old, $new, $content);
             }
 
-            if ($rel === 'README.md') {
-                $content = preg_replace(
-                    '/^#\s+.+$/m',
-                    '# ' . $new,
-                    $content,
-                    1
-                ) ?? $content;
+            if (str_starts_with($rel, 'README')) {
+                $content = $this->patchReadmeTitle($content, $new);
             }
 
             if (file_put_contents($path, $content) === false) {
                 throw new RuntimeException("无法写入: {$rel}");
             }
-            echo "已更新: {$rel}\n";
+            echo "[{$this->kind}] 已更新: {$rel}\n";
         }
     }
 
@@ -184,27 +194,66 @@ final class ProjectCreator
             1
         ) ?? $content;
 
-        $content = preg_replace(
+        return preg_replace(
             '/^PROJECT_NAME=.*$/m',
             'PROJECT_NAME="' . $projectName . '"',
             $content,
             1
         ) ?? $content;
+    }
 
-        return $content;
+    private function patchPackageJsonName(string $content, string $projectName): string
+    {
+        $data = json_decode($content, true);
+        if (!is_array($data)) {
+            return str_replace(Config::DEFAULT_FRONTEND_OLD_NAME, $projectName, $content);
+        }
+        $data['name'] = $projectName;
+        $encoded = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($encoded === false) {
+            throw new RuntimeException('无法编码 package.json');
+        }
+
+        return $encoded . "\n";
+    }
+
+    private function patchReadmeTitle(string $content, string $projectName): string
+    {
+        $patched = preg_replace('/^#\s+.+$/m', '# ' . $projectName, $content, 1);
+        if (is_string($patched)) {
+            return $patched;
+        }
+
+        // Vben README 标题在 <h1> 里
+        $patched = preg_replace(
+            '/<h1>.*?<\/h1>/s',
+            '<h1>' . htmlspecialchars($projectName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</h1>',
+            $content,
+            1
+        );
+
+        return is_string($patched) ? $patched : $content;
     }
 
     private function prepareEnv(): void
     {
+        if ($this->kind === Config::TYPE_FRONTEND) {
+            echo "[{$this->kind}] 请按需编辑 apps/web-ele/.env.development 中的接口代理地址\n";
+
+            return;
+        }
+
         $env = $this->targetDir . DIRECTORY_SEPARATOR . '.env';
         $example = $this->targetDir . DIRECTORY_SEPARATOR . '.env.example';
 
         if (is_file($env)) {
-            echo ".env 已存在，跳过\n";
+            echo "[{$this->kind}] .env 已存在，跳过\n";
+
             return;
         }
         if (!is_file($example)) {
-            echo "无 .env.example，跳过生成 .env\n";
+            echo "[{$this->kind}] 无 .env.example，跳过生成 .env\n";
+
             return;
         }
 
@@ -223,7 +272,7 @@ final class ProjectCreator
         if (file_put_contents($env, $content) === false) {
             throw new RuntimeException('无法写入 .env');
         }
-        echo "已生成 .env（含随机 JWT_SECRET）\n";
+        echo "[{$this->kind}] 已生成 .env（含随机 JWT_SECRET）\n";
     }
 
     private function resetGit(): void
@@ -231,7 +280,7 @@ final class ProjectCreator
         $gitDir = $this->targetDir . DIRECTORY_SEPARATOR . '.git';
         if (is_dir($gitDir)) {
             $this->removeDir($gitDir);
-            echo "已移除模板 .git\n";
+            echo "[{$this->kind}] 已移除模板 .git\n";
         }
 
         if ($this->keepGit) {
@@ -243,7 +292,7 @@ final class ProjectCreator
         chdir($this->targetDir);
         try {
             $this->execOrFail('git init', 'git init 失败');
-            echo "已 git init 新仓库\n";
+            echo "[{$this->kind}] 已 git init 新仓库\n";
         } finally {
             if ($cwd !== false) {
                 chdir($cwd);
@@ -257,7 +306,7 @@ final class ProjectCreator
         $cwd = getcwd();
         chdir($this->targetDir);
         try {
-            echo "正在 composer install ...\n";
+            echo "[{$this->kind}] 正在 composer install ...\n";
             $this->execOrFail('composer install --no-interaction', 'composer install 失败');
         } finally {
             if ($cwd !== false) {
@@ -266,20 +315,19 @@ final class ProjectCreator
         }
     }
 
-    private function printNextSteps(): void
+    private function runPnpmInstall(): void
     {
-        $name = $this->projectName;
-        echo "\n";
-        echo "✓ 项目已创建: {$this->targetDir}\n";
-        echo "\n下一步:\n";
-        echo "  cd {$name}\n";
-        if (!$this->withComposer) {
-            echo "  composer install\n";
+        $this->assertCommand('pnpm');
+        $cwd = getcwd();
+        chdir($this->targetDir);
+        try {
+            echo "[{$this->kind}] 正在 pnpm install ...\n";
+            $this->execOrFail('pnpm install', 'pnpm install 失败');
+        } finally {
+            if ($cwd !== false) {
+                chdir($cwd);
+            }
         }
-        echo "  # 编辑 .env 中的数据库 / Redis\n";
-        echo "  php webman start\n";
-        echo "  # 或打包镜像: bash build.sh\n";
-        echo "\n";
     }
 
     private function assertCommand(string $command): void
