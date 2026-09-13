@@ -18,7 +18,7 @@ final class Application
         }
 
         if (in_array($args[0], ['-V', '--version', 'version'], true)) {
-            echo "aorinex-new 1.3.0\n";
+            echo "aorinex-new 1.4.0\n";
 
             return 0;
         }

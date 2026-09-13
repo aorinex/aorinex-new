@@ -64,18 +64,38 @@ final class Config
     ];
 
     /**
-     * 官网（Nuxt）改名白名单。
+     * 官网（Nuxt）改名白名单（业务/README；AI 指引由 AI_GUIDANCE_* 扫描处理）。
      *
      * @var list<string>
      */
     public const WEBSITE_RENAME_FILES = [
         'package.json',
         'README.md',
-        'AGENTS.md',
         'app/components/SiteFooter.vue',
-        '.agents/skills/nuxt-coding-standards/SKILL.md',
-        '.cursor/skills/nuxt-coding-standards/SKILL.md',
-        '.cursor/rules/sibling-repos.mdc',
+    ];
+
+    /**
+     * 各端 AI 指引：根级单文件（存在则改写兄弟仓名）。
+     *
+     * @var list<string>
+     */
+    public const AI_GUIDANCE_ROOT_FILES = [
+        'AGENTS.md',
+        'CLAUDE.md',
+        'GEMINI.md',
+        '.github/copilot-instructions.md',
+    ];
+
+    /**
+     * 各端 AI 指引：目录 → 扩展名（递归扫描，存在则改写兄弟仓名）。
+     *
+     * @var array<string, list<string>>
+     */
+    public const AI_GUIDANCE_SCAN_DIRS = [
+        '.cursor/rules' => ['mdc'],
+        '.cursor/skills' => ['md'],
+        '.claude/skills' => ['md'],
+        '.agents/skills' => ['md'],
     ];
 
     /**

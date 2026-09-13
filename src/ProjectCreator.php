@@ -42,6 +42,7 @@ final class ProjectCreator
 
         $this->fetchTemplate();
         $this->renameProject();
+        $this->patchAiGuidanceSiblingNames();
         $this->prepareEnv();
         $this->resetGit();
 
@@ -326,15 +327,92 @@ final class ProjectCreator
         }
     }
 
-    private function patchWebsiteSiblingNames(string $content): string
+    /**
+     * 扫描各模型 AI 指引文件，将模板兄弟仓名替换为新项目名。
+     */
+    private function patchAiGuidanceSiblingNames(): void
+    {
+        foreach ($this->collectAiGuidanceFiles() as $rel) {
+            $path = $this->targetDir . DIRECTORY_SEPARATOR . $rel;
+            $content = file_get_contents($path);
+            if ($content === false) {
+                throw new RuntimeException("无法读取: {$rel}");
+            }
+
+            $updated = $this->patchSiblingRepoNames($content);
+            if ($updated === $content) {
+                continue;
+            }
+
+            if (file_put_contents($path, $updated) === false) {
+                throw new RuntimeException("无法写入: {$rel}");
+            }
+            echo "[{$this->kind}] 已更新 AI 指引: {$rel}\n";
+        }
+    }
+
+    /**
+     * @return list<string> 相对 targetDir 的路径
+     */
+    private function collectAiGuidanceFiles(): array
+    {
+        $files = [];
+
+        foreach (Config::AI_GUIDANCE_ROOT_FILES as $rel) {
+            $path = $this->targetDir . DIRECTORY_SEPARATOR . $rel;
+            if (is_file($path)) {
+                $files[] = $rel;
+            }
+        }
+
+        foreach (Config::AI_GUIDANCE_SCAN_DIRS as $dirRel => $extensions) {
+            $dirPath = $this->targetDir . DIRECTORY_SEPARATOR . $dirRel;
+            if (!is_dir($dirPath)) {
+                continue;
+            }
+
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator(
+                    $dirPath,
+                    \FilesystemIterator::SKIP_DOTS
+                )
+            );
+
+            /** @var \SplFileInfo $file */
+            foreach ($iterator as $file) {
+                if (!$file->isFile()) {
+                    continue;
+                }
+                $ext = strtolower($file->getExtension());
+                if (!in_array($ext, $extensions, true)) {
+                    continue;
+                }
+                $full = $file->getPathname();
+                $rel = substr($full, strlen($this->targetDir) + 1);
+                $rel = str_replace('\\', '/', $rel);
+                $files[] = $rel;
+            }
+        }
+
+        sort($files);
+
+        return array_values(array_unique($files));
+    }
+
+    private function patchSiblingRepoNames(string $content): string
     {
         $map = [
-            Config::DEFAULT_WEBSITE_OLD_NAME => $this->projectName,
             'aorinex-backend' => $this->baseName . '-backend',
             'aorinex-frontend' => $this->baseName . '-frontend',
+            Config::DEFAULT_WEBSITE_OLD_NAME => $this->baseName . '-website',
         ];
 
         return str_replace(array_keys($map), array_values($map), $content);
+    }
+
+    private function patchWebsiteSiblingNames(string $content): string
+    {
+        return $this->patchSiblingRepoNames($content);
     }
 
     private function patchBuildConfig(string $content, string $projectName, string $imageRepo): string
