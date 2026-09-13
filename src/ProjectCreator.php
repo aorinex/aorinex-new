@@ -75,18 +75,148 @@ final class ProjectCreator
         }
 
         $this->assertCommand('git');
-        echo "[{$this->kind}] 正在克隆模板 {$this->templateRepo} ({$this->templateRef}) ...\n";
+        $ref = $this->resolveTemplateRef($this->templateRepo, $this->templateRef);
+        echo "[{$this->kind}] 正在克隆模板 {$this->templateRepo} @ {$ref} ...\n";
         $cmd = sprintf(
             'git clone --depth 1 --branch %s %s %s',
-            escapeshellarg($this->templateRef),
+            escapeshellarg($ref),
             escapeshellarg($this->templateRepo),
             escapeshellarg($this->targetDir)
         );
         $this->execOrFail(
             $cmd,
-            "[{$this->kind}] git clone 失败（请检查仓库地址，或使用 --backend-from / --frontend-from / --website-from）"
+            "[{$this->kind}] git clone 失败（请检查仓库地址/标签，或使用 --backend-from / --frontend-from / --website-from）"
         );
-        echo "[{$this->kind}] 克隆完成: {$this->targetDir}\n";
+        echo "[{$this->kind}] 克隆完成: {$this->targetDir}（ref={$ref}）\n";
+    }
+
+    /**
+     * latest → 远程最新稳定 semver tag；否则原样使用分支/tag。
+     */
+    private function resolveTemplateRef(string $repo, string $ref): string
+    {
+        if (!Config::isLatestRef($ref)) {
+            return $ref;
+        }
+
+        echo "[{$this->kind}] 正在解析远程最新稳定标签: {$repo} ...\n";
+        $tag = $this->resolveLatestStableTag($repo);
+        if ($tag === null) {
+            echo "[{$this->kind}] 警告: 未找到可用 tag，回退到 main\n";
+
+            return 'main';
+        }
+
+        echo "[{$this->kind}] 选用标签: {$tag}\n";
+
+        return $tag;
+    }
+
+    private function resolveLatestStableTag(string $repo): ?string
+    {
+        $output = [];
+        $code = 0;
+        exec(
+            sprintf('git ls-remote --tags --refs %s 2>&1', escapeshellarg($repo)),
+            $output,
+            $code
+        );
+        if ($code !== 0) {
+            $detail = implode("\n", $output);
+            throw new RuntimeException(
+                "[{$this->kind}] 无法列出远程标签: {$repo}"
+                . ($detail !== '' ? "\n" . $detail : '')
+            );
+        }
+
+        $tags = [];
+        foreach ($output as $line) {
+            if (preg_match('#refs/tags/(.+)$#', $line, $matches) !== 1) {
+                continue;
+            }
+            $tags[] = $matches[1];
+        }
+
+        return $this->pickLatestStableTag($tags);
+    }
+
+    /**
+     * @param list<string> $tags
+     */
+    private function pickLatestStableTag(array $tags): ?string
+    {
+        $stable = [];
+        $prerelease = [];
+
+        foreach ($tags as $tag) {
+            $parsed = $this->parseSemverTag($tag);
+            if ($parsed === null) {
+                continue;
+            }
+            if ($parsed['prerelease'] !== null) {
+                $prerelease[] = ['tag' => $tag, 'parsed' => $parsed];
+            } else {
+                $stable[] = ['tag' => $tag, 'parsed' => $parsed];
+            }
+        }
+
+        $candidates = $stable !== [] ? $stable : $prerelease;
+        if ($candidates === []) {
+            return null;
+        }
+
+        usort($candidates, function (array $a, array $b): int {
+            return $this->compareSemver($a['parsed'], $b['parsed']);
+        });
+
+        return $candidates[array_key_last($candidates)]['tag'];
+    }
+
+    /**
+     * @return array{major:int,minor:int,patch:int,prerelease:?string}|null
+     */
+    private function parseSemverTag(string $tag): ?array
+    {
+        if (preg_match(
+            '/^v?(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:-(?P<pre>[0-9A-Za-z.-]+))?$/',
+            $tag,
+            $m
+        ) !== 1) {
+            return null;
+        }
+
+        return [
+            'major' => (int) $m['major'],
+            'minor' => (int) $m['minor'],
+            'patch' => (int) $m['patch'],
+            'prerelease' => isset($m['pre']) && $m['pre'] !== '' ? $m['pre'] : null,
+        ];
+    }
+
+    /**
+     * @param array{major:int,minor:int,patch:int,prerelease:?string} $a
+     * @param array{major:int,minor:int,patch:int,prerelease:?string} $b
+     */
+    private function compareSemver(array $a, array $b): int
+    {
+        foreach (['major', 'minor', 'patch'] as $part) {
+            if ($a[$part] !== $b[$part]) {
+                return $a[$part] <=> $b[$part];
+            }
+        }
+
+        // 无预发布号的版本更大（1.0.0 > 1.0.0-rc.1）
+        if ($a['prerelease'] === null && $b['prerelease'] === null) {
+            return 0;
+        }
+        if ($a['prerelease'] === null) {
+            return 1;
+        }
+        if ($b['prerelease'] === null) {
+            return -1;
+        }
+
+        return strnatcasecmp($a['prerelease'], $b['prerelease']);
     }
 
     private function copyFromLocal(string $source, string $dest): void

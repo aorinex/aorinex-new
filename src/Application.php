@@ -18,7 +18,7 @@ final class Application
         }
 
         if (in_array($args[0], ['-V', '--version', 'version'], true)) {
-            echo "aorinex-new 1.2.0\n";
+            echo "aorinex-new 1.3.0\n";
 
             return 0;
         }
@@ -288,7 +288,8 @@ aorinex-new — 从 aorinex 后端/管理端/官网模板创建新项目
   --frontend-repo <url>     管理端 Git（默认: {$frontendRepo}）
   --website-repo <url>      官网 Git（默认: {$websiteRepo}，别名 --nuxt-repo）
   --repo <url>              单侧模式下的模板仓库（兼容）
-  --ref, --branch <ref>     分支或 tag（默认: main）
+  --ref, --branch <ref>     模板引用（默认: latest = 各仓最新稳定 tag）
+                            也可指定具体 tag/分支，如 v1.2.0、main
   --image-namespace <n>     后端镜像命名空间前缀
   -d, --directory <dir>     自定义输出根目录
   --keep-git                保留模板 .git / 不重新 git init
@@ -303,13 +304,16 @@ aorinex-new — 从 aorinex 后端/管理端/官网模板创建新项目
   AORINEX_NEW_TEMPLATE_REF / AORINEX_NEW_IMAGE_NAMESPACE
 
 示例:
-  aorinex-new my-app all \\
-    --backend-from /www/wwwroot/aorinex-backend \\
-    --frontend-from /www/wwwroot/aorinex-frontend \\
-    --website-from /www/wwwroot/aorinex-nuxt
+  # 默认：各远程仓最新稳定 tag
+  aorinex-new my-app all
+
+  # 强制用 main（开发中代码，不推荐生产脚手架）
+  aorinex-new my-app all --ref main
+
+  # 固定某一 tag
+  aorinex-new my-app backend --ref v1.2.0
 
   aorinex-new my-app website --website-from /www/wwwroot/aorinex-nuxt
-  aorinex-new my-app nuxt --nuxt-from /www/wwwroot/aorinex-nuxt
 
 HELP;
     }

@@ -35,6 +35,12 @@ final class Config
     public const DEFAULT_IMAGE_NAMESPACE = 'docker-images-registry.cn-shanghai.cr.aliyuncs.com/mirortho';
 
     /**
+     * 默认模板引用：解析各远程仓库的最新稳定 tag（非 main 分支 tip）。
+     * 可用 --ref / AORINEX_NEW_TEMPLATE_REF 覆盖为具体 tag 或分支名。
+     */
+    public const REF_LATEST = 'latest';
+
+    /**
      * 后端改名白名单。
      *
      * @var list<string>
@@ -127,7 +133,16 @@ final class Config
 
     public static function defaultTemplateRef(): string
     {
-        return self::envOr('AORINEX_NEW_TEMPLATE_REF', null, 'main');
+        return self::envOr('AORINEX_NEW_TEMPLATE_REF', null, self::REF_LATEST);
+    }
+
+    public static function isLatestRef(string $ref): bool
+    {
+        $normalized = strtolower(trim($ref));
+
+        return $normalized === self::REF_LATEST
+            || $normalized === '@latest'
+            || $normalized === 'latest-tag';
     }
 
     public static function defaultImageNamespace(): string
